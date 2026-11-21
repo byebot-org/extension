@@ -77,10 +77,21 @@
     document.getElementById('byebot-channel-banner')?.remove();
     closeDialog();
   }
+  const isInvalidated = (e) => /Extension context invalidated/i.test(String(e?.message ?? e));
+  window.addEventListener('unhandledrejection', (e) => {
+    if (isInvalidated(e.reason)) { e.preventDefault(); shutdown(); }
+  });
+  window.addEventListener('error', (e) => {
+    if (isInvalidated(e.error ?? e.message)) { e.preventDefault(); shutdown(); }
+  });
+
   const send = (msg) => {
     if (!alive()) { shutdown(); return Promise.resolve({ error: 'extension_unavailable' }); }
     try {
-      return Promise.resolve(api.runtime.sendMessage(msg)).catch(() => ({ error: 'extension_unavailable' }));
+      return Promise.resolve(api.runtime.sendMessage(msg)).catch((e) => {
+        if (isInvalidated(e)) shutdown();
+        return { error: 'extension_unavailable' };
+      });
     } catch {
       shutdown();
       return Promise.resolve({ error: 'extension_unavailable' });
@@ -566,7 +577,7 @@
 
   // ---- init -------------------------------------------------------------
   api.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local') return;
+    if (area !== 'local' || !alive()) return;
     if (changes.mode) {
       mode = changes.mode.newValue ?? 'hide';
       document.querySelectorAll('[data-byebot-id]').forEach(clearCard);
@@ -588,5 +599,5 @@
     navHandler = () => scheduleScan(true);
     document.addEventListener('yt-navigate-finish', navHandler);
     scheduleScan(true);
-  });
+  }).catch(() => shutdown());
 })();
