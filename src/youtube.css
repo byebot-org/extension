@@ -150,3 +150,14 @@ html[dark] {
 }
 #byebot-short .byebot-short-pip[class*="byebot-badge-"] { display: block; }
 #byebot-short .byebot-short-pip.byebot-badge-maybe { color: #1f1300; }
+
+/* "Report" / "Human" rows added to YouTube's three-dot menu */
+.byebot-menu-sep { height: 1px; margin: 8px 0; background: var(--bb-layer-hover); }
+.byebot-menu-item {
+  display: flex; align-items: center; gap: 16px; box-sizing: border-box; min-height: 40px; padding: 0 16px; cursor: pointer;
+  color: var(--yt-spec-text-primary, var(--bb-text)); font: 400 14px/20px Roboto, Arial, sans-serif; white-space: nowrap;
+}
+.byebot-menu-item:hover, .byebot-menu-item:focus-visible { background: var(--yt-spec-10-percent-layer, var(--bb-layer)); outline: none; }
+.byebot-menu-item svg { flex: none; width: 24px; height: 24px; }
+.byebot-menu-report svg { color: #cc0000; }
+.byebot-menu-human svg { color: #16a34a; }

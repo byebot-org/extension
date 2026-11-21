@@ -85,6 +85,7 @@
   function shutdown() {
     observer?.disconnect();
     if (navHandler) document.removeEventListener('yt-navigate-finish', navHandler);
+    document.removeEventListener('click', onMenuOpenClick, true);
     clearTimeout(scanTimer);
     clearTimeout(persistTimer);
     scanTimer = persistTimer = null;
@@ -185,6 +186,7 @@
     scheduleScan(true);
     updateBar();
     updateCommunityBadge();
+    refreshMenuItems();
   }
 
   function fail(res) {
@@ -418,6 +420,7 @@
     if (shortId) renderShortsUi();
     else renderReportBar();
     renderChannelBanner();
+    injectMenuItems();
   }
 
   // Throttle (not debounce): YouTube mutates the DOM constantly while loading,
@@ -717,6 +720,89 @@
     updateCommunityBadge();
     loadMyVote(videoId);
     loadVideoStats(videoId);
+  }
+
+  // ---- three-dot menu: add "Report" / "Human" -----------------------------
+  const MENU_BTN = '.ytLockupMetadataViewModelMenuButton button, ytd-menu-renderer button, ytd-menu-renderer yt-icon-button';
+  const MENU_LISTS = 'yt-list-view-model, tp-yt-paper-listbox#items, ytd-menu-popup-renderer #items';
+  let menuTarget = null; // { videoId, channelId, ts } of the video whose menu was just opened
+
+  function onMenuOpenClick(e) {
+    if (!alive()) return shutdown();
+    const btn = e.target?.closest?.(MENU_BTN);
+    if (!btn) return;
+    const card = btn.closest(CARD_SELECTOR);
+    let target = null;
+    if (card) {
+      const info = cardInfo(card);
+      target = { videoId: info.videoId, channelId: info.channelId };
+    } else if (btn.closest('ytd-watch-metadata') && location.pathname === '/watch') {
+      const link = document.querySelector('ytd-watch-metadata #owner ytd-channel-name a');
+      target = { videoId: new URLSearchParams(location.search).get('v'), channelId: link ? idFromHref(link.getAttribute('href')) : null };
+    } else if (btn.closest('ytd-reel-video-renderer')) {
+      target = { videoId: shortsPageId(), channelId: reelChannel(activeReel()) };
+    }
+    menuTarget = target?.videoId ? { ...target, ts: Date.now() } : null;
+  }
+  document.addEventListener('click', onMenuOpenClick, true);
+
+  function closeMenu() {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true }));
+  }
+
+  function menuLabels(videoId) {
+    const v = myVotes.get(videoId)?.verdict;
+    return {
+      report: v === 'bot' ? `✓ ${tr('reported')}` : tr('report'),
+      human: v === 'human' ? `✓ ${tr('human')}` : tr('human'),
+    };
+  }
+
+  function refreshMenuItems() {
+    for (const row of document.querySelectorAll('.byebot-menu-item')) {
+      row.querySelector('span').textContent = menuLabels(row.dataset.video)[row.dataset.kind];
+    }
+  }
+
+  function makeMenuItem(kind, target) {
+    const row = el('div', `byebot-menu-item byebot-menu-${kind}`);
+    row.dataset.kind = kind;
+    row.dataset.video = target.videoId;
+    row.setAttribute('role', 'menuitem');
+    row.tabIndex = 0;
+    row.append(svgIcon(kind === 'report' ? 'maybe' : 'human'), el('span', '', menuLabels(target.videoId)[kind]));
+    const run = async (e) => {
+      e.stopPropagation();
+      closeMenu();
+      const getChannel = () => target.channelId;
+      if (kind === 'report') await onReportClick(target.videoId, getChannel);
+      else await onHumanClick(target.videoId, getChannel, { disabled: false });
+    };
+    row.onclick = run;
+    row.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); run(e); } };
+    return row;
+  }
+
+  function injectMenuItems() {
+    if (!menuTarget || Date.now() - menuTarget.ts > 6000) return;
+    for (const dd of document.querySelectorAll('tp-yt-iron-dropdown, ytd-popup-container yt-sheet-view-model')) {
+      const r = dd.getBoundingClientRect();
+      if (r.width < 50 || dd.querySelector('.byebot-menu-item')) continue; // closed, or already done
+      const list = dd.querySelector(MENU_LISTS);
+      if (!list) continue;
+      // At the top: YouTube sizes the menu when it opens, so rows added at the end could end up
+      // below the fold in its scroll area.
+      const group = el('div', 'byebot-menu-group');
+      group.append(makeMenuItem('report', menuTarget), makeMenuItem('human', menuTarget), el('div', 'byebot-menu-sep'));
+      list.prepend(group);
+      // Classic Polymer popups size themselves when opened; tell them the content changed.
+      const resize = () => {
+        for (const t of [list, list.closest('ytd-menu-popup-renderer'), dd]) t?.dispatchEvent(new CustomEvent('iron-resize', { bubbles: true, composed: true }));
+      };
+      resize();
+      setTimeout(resize, 150);
+      loadMyVote(menuTarget.videoId).then(refreshMenuItems);
+    }
   }
 
   // ---- init -------------------------------------------------------------
