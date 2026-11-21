@@ -66,8 +66,8 @@ const handlers = {
   myVote: (m) => myVote(m.videoId),
   withdraw: (m) => withdraw(m.videoId),
   getState: async () => {
-    const [session, { mode }] = await Promise.all([getSession(), api.storage.local.get('mode')]);
-    return { signedIn: !!session, mode: mode ?? 'hide' };
+    const [session, { mode, shortsMode }] = await Promise.all([getSession(), api.storage.local.get(['mode', 'shortsMode'])]);
+    return { signedIn: !!session, mode: mode ?? 'hide', shortsMode: shortsMode ?? 'mark' };
   },
   openLogin: async () => { await api.tabs.create({ url: LOGIN_URL }); return {}; },
   signOut: async () => { await api.storage.local.remove('session'); return {}; },

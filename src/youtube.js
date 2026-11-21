@@ -14,10 +14,26 @@
     'ytd-reel-item-renderer',
   ].join(',');
   const THUMB_SELECTOR = 'yt-thumbnail-view-model, ytd-thumbnail, a#thumbnail';
-  const BADGE_ICONS = {
-    human: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-    maybe: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 7v6.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><circle cx="12" cy="17.2" r="1.7" fill="currentColor"/></svg>',
-  };
+  // Icons are built with createElementNS: YouTube enforces Trusted Types, so DOMParser/innerHTML throw.
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  function svgIcon(name) {
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    const add = (tag, attrs) => {
+      const e = document.createElementNS(SVG_NS, tag);
+      for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+      svg.append(e);
+    };
+    const stroke = { fill: 'none', stroke: 'currentColor', 'stroke-width': '3', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' };
+    if (name === 'human') {
+      add('path', { d: 'M5 12.5l4.5 4.5L19 7.5', ...stroke });
+    } else { // 'maybe' / report: exclamation mark
+      add('path', { d: 'M12 7v6.5', ...stroke });
+      add('circle', { cx: '12', cy: '17.2', r: '1.7', fill: 'currentColor' });
+    }
+    return svg;
+  }
   const CHANNEL_LINK = 'a[href*="/@"], a[href*="/channel/UC"]';
   const VIDEO_LINK = 'a[href*="/watch?v="], a[href*="/shorts/"]';
   const CACHE_TTL = 5 * 60 * 1000;
@@ -52,7 +68,8 @@
     }, 1500);
   }
   const shownAnyway = new Set(); // video ids (or channel ids if no video id) the user revealed this session
-  let mode = 'hide'; // 'hide' | 'mark' | 'off'
+  let mode = 'hide'; // regular videos: 'hide' | 'mark' | 'off'
+  let shortsMode = 'mark'; // Shorts: 'skip' | 'mark' | 'off'
   let scanTimer = null;
 
   // Use YouTube's UI language, which is what the user is reading.
@@ -74,6 +91,7 @@
     document.querySelectorAll('[data-byebot-id]').forEach(clearCard);
     document.getElementById('byebot-bar')?.remove();
     document.getElementById('byebot-community')?.remove();
+    document.getElementById('byebot-short')?.remove();
     document.getElementById('byebot-channel-banner')?.remove();
     closeDialog();
   }
@@ -139,11 +157,12 @@
       if (channelId) break;
     }
     let videoId = null;
+    let short = card.matches('ytm-shorts-lockup-view-model, ytd-reel-item-renderer');
     for (const a of card.querySelectorAll(VIDEO_LINK)) {
       videoId = videoFromHref(a.getAttribute('href'));
-      if (videoId) break;
+      if (videoId) { short = short || a.getAttribute('href').includes('/shorts/'); break; }
     }
-    return { channelId, videoId };
+    return { channelId, videoId, short };
   }
 
   // ---- voting -----------------------------------------------------------
@@ -267,6 +286,9 @@
     removeBadge(card);
   }
 
+  /** Shorts follow their own setting: skip -> hide the card, mark -> badge only, off -> nothing. */
+  const effMode = (info) => (info.short ? { skip: 'hide', mark: 'mark', off: 'off' }[shortsMode] ?? 'mark' : mode);
+
   // ---- badge ------------------------------------------------------------
   /** 'human' = judged human, 'bot' = judged AI, 'maybe' = channel flagged but this video not judged yet. */
   function badgeState({ channelId, videoId }) {
@@ -284,7 +306,7 @@
   }
 
   function setBadge(card, info) {
-    const state = mode === 'off' ? null : badgeState(info);
+    const state = effMode(info) === 'off' ? null : badgeState(info);
     if (!state) return removeBadge(card);
     if (card._byebotBadge?.dataset.state === state && card._byebotBadge.isConnected) return;
     removeBadge(card);
@@ -295,8 +317,7 @@
     if (state === 'bot') {
       badge.textContent = 'IA'; // literal text, same in every language
     } else {
-      const svg = new DOMParser().parseFromString(BADGE_ICONS[state], 'image/svg+xml').documentElement;
-      badge.append(document.importNode(svg, true));
+      badge.append(svgIcon(state));
     }
     badge.title = tr(state === 'human' ? 'badgeHuman' : state === 'bot' ? 'badgeBot' : 'badgeMaybe');
     host.classList.add('byebot-badge-host');
@@ -320,16 +341,17 @@
 
   function applyHide(card, info) {
     const { channelId, videoId } = info;
+    const eff = effMode(info);
     const reveal = videoId ?? channelId;
-    const flagged = mode !== 'off' && isFlagged(info) && !shownAnyway.has(reveal);
+    const flagged = eff !== 'off' && isFlagged(info) && !shownAnyway.has(reveal);
     if (!flagged) {
       if (card.dataset.byebotLabel) clearCard(card);
       return;
     }
-    if (card.dataset.byebotLabel === mode) return; // already applied
+    if (card.dataset.byebotLabel === eff) return; // already applied
     clearCard(card);
-    card.dataset.byebotLabel = mode;
-    if (mode === 'mark') return; // "mark only": the badge is the marker
+    card.dataset.byebotLabel = eff;
+    if (eff === 'mark') return; // "mark only": the badge is the marker
     card.classList.add('byebot-hidden');
     const ph = el('div', 'byebot-placeholder');
     const name = channelId?.startsWith('@') ? channelId : tr('aFlaggedChannel');
@@ -369,11 +391,17 @@
       if (info.videoId && !fresh(vidCache.get(info.videoId)) && !pending.has('v:' + info.videoId)) wantVid.add(info.videoId);
       applyCard(card, info);
     }
+    const shortId = shortsPageId();
+    if (shortId) {
+      const sc = reelChannel(activeReel());
+      if (!fresh(vidCache.get(shortId)) && !pending.has('v:' + shortId)) wantVid.add(shortId);
+      if (sc && !fresh(chCache.get(sc)) && !pending.has('c:' + sc)) wantCh.add(sc);
+    }
     const pageCh = channelPageId();
     if (pageCh && !fresh(chCache.get(pageCh)) && !pending.has('c:' + pageCh)) wantCh.add(pageCh);
     const ids = [...wantCh];
     const videos = [...wantVid];
-    if (mode !== 'off' && (ids.length || videos.length)) {
+    if ((mode !== 'off' || shortsMode !== 'off') && (ids.length || videos.length)) {
       ids.forEach((i) => pending.add('c:' + i));
       videos.forEach((i) => pending.add('v:' + i));
       send({ type: 'lookup', ids, videos }).then((res) => {
@@ -387,7 +415,8 @@
         scheduleScan(true);
       });
     }
-    renderReportBar();
+    if (shortId) renderShortsUi();
+    else renderReportBar();
     renderChannelBanner();
   }
 
@@ -470,6 +499,7 @@
 
   // ---- report bar on /watch, next to the Subscribe button ---------------
   function updateBar() {
+    updateShortButtons();
     const bar = document.getElementById('byebot-bar');
     if (!bar) return;
     const vote = myVotes.get(bar.dataset.video);
@@ -500,6 +530,7 @@
   }
 
   function updateCommunityBadge() {
+    if (document.getElementById('byebot-short')) return updateShortButtons();
     const bar = document.getElementById('byebot-bar');
     if (!bar) return communityRow(false)?.remove();
     const votes = videoVotes.get(bar.dataset.video);
@@ -529,9 +560,141 @@
     if (!res?.error) { myVotes.set(videoId, res.vote); updateBar(); }
   }
 
+  async function onReportClick(videoId, getChannel) {
+    if (!(await requireSignIn())) return;
+    const v = myVotes.get(videoId);
+    const isBot = v?.verdict === 'bot';
+    openReportDialog(videoId, getChannel(), isBot ? v.reasons : [], isBot);
+  }
+
+  async function onHumanClick(videoId, getChannel, btn) {
+    if (!(await requireSignIn())) return;
+    btn.disabled = true;
+    await (myVotes.get(videoId)?.verdict === 'human' ? withdrawVote(videoId, getChannel()) : submitVote(videoId, getChannel(), 'human'));
+    btn.disabled = false;
+  }
+
+  /** Report / Human buttons for a video on watch pages. */
+  function makeBar(videoId, getChannel) {
+    const bar = el('div');
+    bar.id = 'byebot-bar';
+    bar.dataset.video = videoId;
+    const report = el('button', 'byebot-report');
+    const human = el('button', 'byebot-safe');
+
+    report.onclick = () => onReportClick(videoId, getChannel);
+    human.onclick = () => onHumanClick(videoId, getChannel, human);
+
+    bar.append(report, human);
+    return bar;
+  }
+
+  // ---- Shorts player ----------------------------------------------------
+  const shortsPageId = () => location.pathname.match(/^\/shorts\/([\w-]{11})/)?.[1] ?? null;
+  const activeReel = () => document.querySelector('ytd-reel-video-renderer[is-active]') ?? document.querySelector('ytd-reel-video-renderer');
+  function reelChannel(reel) {
+    const a = reel?.querySelector('yt-reel-channel-bar-view-model a[href*="/@"], a[href*="/@"]');
+    return a ? idFromHref(a.getAttribute('href')) : null;
+  }
+
+  let lastShort = null;
+  let lastLastShort = null;
+  let shortDir = 'down'; // which way the user is scrolling, so skipping never traps them
+  let skippedFor = null;
+
+  function maybeSkipShort(videoId, channelId) {
+    if (shortsMode !== 'skip' || skippedFor === videoId || shownAnyway.has(videoId)) return;
+    if (!isFlagged({ channelId, videoId })) return;
+    const btn = document.querySelector(shortDir === 'up' ? '#navigation-button-up button' : '#navigation-button-down button');
+    if (!btn) return; // nothing to skip to (yet)
+    skippedFor = videoId;
+    btn.click();
+    toast(tr('shortsSkipped'));
+  }
+
+
+  /** Two round buttons that sit right above the Like button in the Shorts action column. */
+  function makeShortButtons(videoId, getChannel) {
+    const box = el('div');
+    box.id = 'byebot-short';
+    box.dataset.video = videoId;
+    const item = (kind, icon, onClick) => {
+      const wrap = el('div', `byebot-short-item byebot-short-item-${kind}`);
+      const btn = el('button', `byebot-short-btn byebot-short-${kind}`);
+      btn.type = 'button';
+      btn.append(svgIcon(icon));
+      if (kind === 'report') btn.append(el('span', 'byebot-short-pip'));
+      btn.onclick = onClick;
+      wrap.append(btn, el('span', 'byebot-short-label'));
+      return wrap;
+    };
+    let humanBtn = null;
+    const reportItem = item('report', 'maybe', () => onReportClick(videoId, getChannel));
+    const humanItem = item('human', 'human', () => onHumanClick(videoId, getChannel, humanBtn));
+    humanBtn = humanItem.querySelector('button');
+    box.append(reportItem, humanItem);
+    return box;
+  }
+
+  function updateShortButtons() {
+    const box = document.getElementById('byebot-short');
+    if (!box) return;
+    const id = box.dataset.video;
+    const vote = myVotes.get(id);
+    const votes = videoVotes.get(id);
+    const total = votes ? votes.bot + votes.human : 0;
+    const report = box.querySelector('.byebot-short-report');
+    const human = box.querySelector('.byebot-short-human');
+    report.classList.toggle('byebot-selected', vote?.verdict === 'bot');
+    human.classList.toggle('byebot-selected', vote?.verdict === 'human');
+
+    // Full community sentence goes in the tooltips; counts go under the buttons like YouTube's Like count.
+    let community = '';
+    if (total > 0 && votes.bot !== votes.human) {
+      const ai = votes.bot > votes.human;
+      const pct = Math.round((Math.max(votes.bot, votes.human) / total) * 100);
+      community = `${tr(ai ? 'communityAi' : 'communityHuman', { pct })} · ${tr(total === 1 ? 'communityVote' : 'communityVotes', { n: total })}`;
+    }
+    const tip = (base) => (community ? `${base}\n${community}` : base);
+    report.title = tip(vote?.verdict === 'bot' ? tr('editHint') : tr('reportHint'));
+    human.title = tip(vote?.verdict === 'human' ? tr('undoHint') : tr('humanHint'));
+    box.querySelector('.byebot-short-item-report .byebot-short-label').textContent = total > 0 ? String(votes.bot) : '';
+    box.querySelector('.byebot-short-item-human .byebot-short-label').textContent = total > 0 ? String(votes.human) : '';
+
+    // Small pip on the report button: the overall verdict (IA / human / possibly AI).
+    const pip = report.querySelector('.byebot-short-pip');
+    const state = shortsMode === 'off' ? null : badgeState({ channelId: reelChannel(activeReel()), videoId: id });
+    pip.className = state ? `byebot-short-pip byebot-badge-${state}` : 'byebot-short-pip';
+    pip.textContent = state === 'bot' ? 'IA' : state === 'human' ? '✓' : state === 'maybe' ? '!' : '';
+    if (state) report.title += `\n${tr(state === 'human' ? 'badgeHuman' : state === 'bot' ? 'badgeBot' : 'badgeMaybe')}`;
+  }
+
+  function renderShortsUi() {
+    const videoId = shortsPageId();
+    const reel = activeReel();
+    if (!videoId || !reel) return removeBar();
+    if (videoId !== lastShort) {
+      shortDir = videoId === lastLastShort ? 'up' : 'down';
+      lastLastShort = lastShort;
+      lastShort = videoId;
+    }
+    maybeSkipShort(videoId, reelChannel(reel));
+
+    const old = document.getElementById('byebot-short');
+    if (old?.isConnected && old.dataset.video === videoId && reel.contains(old)) return updateShortButtons();
+    removeBar();
+    const like = reel.querySelector('like-button-view-model, #like-button');
+    if (!like) return; // action bar not rendered yet; a later scan will retry
+    like.before(makeShortButtons(videoId, () => reelChannel(activeReel())));
+    updateShortButtons();
+    loadMyVote(videoId);
+    loadVideoStats(videoId);
+  }
+
   function removeBar() {
     document.getElementById('byebot-bar')?.remove();
     document.getElementById('byebot-community')?.remove();
+    document.getElementById('byebot-short')?.remove();
   }
 
   function renderReportBar() {
@@ -548,26 +711,7 @@
     if (old?.isConnected && old.dataset.video === videoId && (!sub || old.previousElementSibling === sub)) return;
     removeBar();
 
-    const bar = el('div');
-    bar.id = 'byebot-bar';
-    bar.dataset.video = videoId;
-    const report = el('button', 'byebot-report');
-    const human = el('button', 'byebot-safe');
-
-    report.onclick = async () => {
-      if (!(await requireSignIn())) return;
-      const v = myVotes.get(videoId);
-      const isBot = v?.verdict === 'bot';
-      openReportDialog(videoId, channelId, isBot ? v.reasons : [], isBot);
-    };
-    human.onclick = async () => {
-      if (!(await requireSignIn())) return;
-      human.disabled = true;
-      await (myVotes.get(videoId)?.verdict === 'human' ? withdrawVote(videoId, channelId) : submitVote(videoId, channelId, 'human'));
-      human.disabled = false;
-    };
-
-    bar.append(report, human);
+    const bar = makeBar(videoId, () => channelId);
     sub ? sub.after(bar) : owner.append(bar);
     updateBar();
     updateCommunityBadge();
@@ -578,6 +722,13 @@
   // ---- init -------------------------------------------------------------
   api.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || !alive()) return;
+    if (changes.shortsMode) {
+      shortsMode = changes.shortsMode.newValue ?? 'mark';
+      skippedFor = null;
+      document.querySelectorAll('[data-byebot-id]').forEach(clearCard);
+      updateShortButtons();
+      scheduleScan(true);
+    }
     if (changes.mode) {
       mode = changes.mode.newValue ?? 'hide';
       document.querySelectorAll('[data-byebot-id]').forEach(clearCard);
@@ -590,8 +741,9 @@
     }
   });
 
-  api.storage.local.get(['mode', CACHE_KEY]).then(({ mode: m, [CACHE_KEY]: saved }) => {
+  api.storage.local.get(['mode', 'shortsMode', CACHE_KEY]).then(({ mode: m, shortsMode: sm, [CACHE_KEY]: saved }) => {
     mode = m ?? 'hide';
+    shortsMode = sm ?? 'mark';
     for (const [k, [label, ts, stats]] of Object.entries(saved?.ch ?? {})) chCache.set(k, { label, ts, stats });
     for (const [k, [label, ts]] of Object.entries(saved?.vid ?? {})) vidCache.set(k, { label, ts });
     observer = new MutationObserver(() => scheduleScan());

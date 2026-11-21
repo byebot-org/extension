@@ -7,8 +7,9 @@ document.querySelectorAll('[data-i18n]').forEach((e) => { e.textContent = tr(e.d
 const send = (m) => Promise.resolve(api.runtime.sendMessage(m));
 
 async function refresh() {
-  const { signedIn, mode } = await send({ type: 'getState' });
+  const { signedIn, mode, shortsMode } = await send({ type: 'getState' });
   $('mode').value = mode;
+  $('shortsMode').value = shortsMode;
   $('signin').hidden = signedIn;
   $('signout').hidden = !signedIn;
   $('danger').hidden = !signedIn;
@@ -18,6 +19,7 @@ async function refresh() {
 $('signin').onclick = async () => { await send({ type: 'openLogin' }); window.close(); };
 $('signout').onclick = async () => { await send({ type: 'signOut' }); refresh(); };
 $('mode').onchange = (e) => api.storage.local.set({ mode: e.target.value });
+$('shortsMode').onchange = (e) => api.storage.local.set({ shortsMode: e.target.value });
 $('delete').onclick = async () => {
   if (!confirm(tr('deleteConfirm'))) return;
   await send({ type: 'deleteAccount' });
