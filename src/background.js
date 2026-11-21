@@ -27,15 +27,16 @@ async function request(path, body, token, method = 'POST') {
 async function lookup(ids = [], videos = []) {
   const labels = {};
   const vids = {};
+  const stats = {};
   const batches = Math.max(Math.ceil(ids.length / MAX_BATCH), Math.ceil(videos.length / MAX_BATCH));
   for (let b = 0; b < batches; b++) {
     const { status, data } = await request('/v1/lookup', {
       ids: ids.slice(b * MAX_BATCH, (b + 1) * MAX_BATCH),
       videos: videos.slice(b * MAX_BATCH, (b + 1) * MAX_BATCH),
     });
-    if (status === 200) { Object.assign(labels, data.labels); Object.assign(vids, data.videos); }
+    if (status === 200) { Object.assign(labels, data.labels); Object.assign(vids, data.videos); Object.assign(stats, data.stats); }
   }
-  return { labels, videos: vids };
+  return { labels, videos: vids, stats };
 }
 
 // Authenticated call; a 401 drops the stored session.
@@ -51,12 +52,17 @@ async function authed(path, body, method) {
 }
 
 const report = (videoId, verdict, reasons) => authed('/v1/reports', { videoId, verdict, reasons });
+async function videoStats(videoId) {
+  const { status, data } = await request(`/v1/videos/${encodeURIComponent(videoId)}`, undefined, undefined, 'GET');
+  return status === 200 ? data : { error: 'failed' };
+}
 const myVote = (videoId) => authed(`/v1/reports/mine?videoId=${encodeURIComponent(videoId)}`, undefined, 'GET');
 const withdraw = (videoId) => authed(`/v1/reports?videoId=${encodeURIComponent(videoId)}`, undefined, 'DELETE');
 
 const handlers = {
   lookup: (m) => lookup(m.ids, m.videos),
   report: (m) => report(m.videoId, m.verdict, m.reasons),
+  videoStats: (m) => videoStats(m.videoId),
   myVote: (m) => myVote(m.videoId),
   withdraw: (m) => withdraw(m.videoId),
   getState: async () => {

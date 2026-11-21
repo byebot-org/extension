@@ -1,16 +1,43 @@
+/* Own light/dark palette: YouTube's --yt-spec-* variables aren't always defined,
+   so they're used only when present. */
+:root {
+  --bb-text: #0f0f0f; --bb-text2: #606060; --bb-bg: #ffffff;
+  --bb-layer: rgba(0, 0, 0, 0.06); --bb-layer-hover: rgba(0, 0, 0, 0.12); --bb-chip: rgba(0, 0, 0, 0.06);
+  --bb-teal: #0f766e;
+}
+html[dark] {
+  --bb-text: #ffffff; --bb-text2: #aaaaaa; --bb-bg: #212121;
+  --bb-layer: rgba(255, 255, 255, 0.1); --bb-layer-hover: rgba(255, 255, 255, 0.2); --bb-chip: rgba(255, 255, 255, 0.1);
+  --bb-teal: #2dd4bf;
+}
+
 .byebot-hidden { display: none !important; }
-.byebot-marked { opacity: 0.45; outline: 2px solid #ef4444; outline-offset: -2px; border-radius: 12px; }
+
+/* Status badge on video thumbnails (top-right) */
+.byebot-badge-host { position: relative; }
+.byebot-badge {
+  position: absolute; top: 6px; right: 6px; z-index: 3;
+  display: flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border-radius: 50%; color: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.55); transition: opacity 0.15s;
+}
+.byebot-badge svg { width: 16px; height: 16px; }
+.byebot-badge-human { background: #16a34a; }
+.byebot-badge-maybe { background: #f59e0b; color: #1f1300; }
+.byebot-badge-bot { background: #dc2626; font: 800 11px/1 Roboto, Arial, sans-serif; letter-spacing: 0.2px; }
+/* YouTube shows its own hover buttons (watch later, queue) in the same corner. */
+.byebot-badge-host:hover .byebot-badge { opacity: 0; }
 
 .byebot-placeholder {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   margin: 6px 0; padding: 8px 12px; border-radius: 10px;
   background: rgba(20, 184, 166, 0.1); border: 1px solid rgba(20, 184, 166, 0.35);
-  color: var(--yt-spec-text-secondary, #aaa); font: 500 12px/1.4 Roboto, Arial, sans-serif;
+  color: var(--yt-spec-text-secondary, var(--bb-text2)); font: 500 12px/1.4 Roboto, Arial, sans-serif;
 }
 .byebot-placeholder span { flex: 1 1 auto; }
 .byebot-placeholder button {
   cursor: pointer; border: 1px solid rgba(20, 184, 166, 0.5); background: transparent;
-  color: #2dd4bf; border-radius: 999px; padding: 4px 10px; font: 600 12px Roboto, Arial, sans-serif;
+  color: var(--bb-teal); border-radius: 999px; padding: 4px 10px; font: 600 12px Roboto, Arial, sans-serif;
 }
 .byebot-placeholder button:hover { background: rgba(20, 184, 166, 0.18); }
 
@@ -27,8 +54,8 @@
 #byebot-bar .byebot-report { background: #cc0000; color: #fff; }
 #byebot-bar .byebot-report:hover:not(:disabled) { background: #a80000; }
 #byebot-bar .byebot-report.byebot-selected { background: #7a0000; }
-#byebot-bar .byebot-safe { background: var(--yt-spec-badge-chip-background, rgba(255,255,255,.1)); color: var(--yt-spec-text-primary, #fff); }
-#byebot-bar .byebot-safe:hover:not(:disabled) { background: var(--yt-spec-button-chip-background-hover, rgba(255,255,255,.2)); }
+#byebot-bar .byebot-safe { background: var(--yt-spec-badge-chip-background, var(--bb-chip)); color: var(--yt-spec-text-primary, var(--bb-text)); }
+#byebot-bar .byebot-safe:hover:not(:disabled) { background: var(--yt-spec-button-chip-background-hover, var(--bb-layer-hover)); }
 #byebot-bar .byebot-safe.byebot-selected { background: rgba(34, 197, 94, 0.25); color: #4ade80; }
 #byebot-bar button:disabled { opacity: 0.6; cursor: default; }
 
@@ -40,25 +67,25 @@
 #byebot-dialog {
   width: 440px; max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); overflow: auto; box-sizing: border-box;
   padding: 24px; border-radius: 12px;
-  background: var(--yt-spec-base-background, #212121); color: var(--yt-spec-text-primary, #fff);
+  background: var(--yt-spec-base-background, var(--bb-bg)); color: var(--yt-spec-text-primary, var(--bb-text));
   font-family: Roboto, Arial, sans-serif; box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
 }
 #byebot-dialog h2 { margin: 0 0 8px; font: 500 20px/28px Roboto, Arial, sans-serif; color: inherit; }
-#byebot-dialog .byebot-sub { margin: 0 0 12px; font: 400 14px/20px Roboto, Arial, sans-serif; color: var(--yt-spec-text-secondary, #aaa); }
+#byebot-dialog .byebot-sub { margin: 0 0 12px; font: 400 14px/20px Roboto, Arial, sans-serif; color: var(--yt-spec-text-secondary, var(--bb-text2)); }
 .byebot-reasons { display: flex; flex-direction: column; }
 .byebot-reason {
   display: flex; align-items: center; gap: 16px; padding: 10px 4px; cursor: pointer; border-radius: 8px;
   font: 400 14px/20px Roboto, Arial, sans-serif;
 }
-.byebot-reason:hover { background: var(--yt-spec-10-percent-layer, rgba(255,255,255,.1)); }
+.byebot-reason:hover { background: var(--yt-spec-10-percent-layer, var(--bb-layer)); }
 .byebot-reason input { width: 18px; height: 18px; margin: 0; accent-color: #cc0000; cursor: pointer; flex: none; }
 .byebot-footer { display: flex; align-items: center; gap: 8px; margin-top: 20px; }
 .byebot-spacer { flex: 1; }
 .byebot-btn {
   height: 36px; padding: 0 16px; border: none; border-radius: 18px; cursor: pointer; background: transparent;
-  color: var(--yt-spec-text-primary, #fff); font: 500 14px Roboto, Arial, sans-serif;
+  color: var(--yt-spec-text-primary, var(--bb-text)); font: 500 14px Roboto, Arial, sans-serif;
 }
-.byebot-btn:hover:not(:disabled) { background: var(--yt-spec-10-percent-layer, rgba(255,255,255,.1)); }
+.byebot-btn:hover:not(:disabled) { background: var(--yt-spec-10-percent-layer, var(--bb-layer)); }
 .byebot-btn.byebot-primary { background: #cc0000; color: #fff; }
 .byebot-btn.byebot-primary:hover:not(:disabled) { background: #a80000; }
 .byebot-btn.byebot-danger { color: #ff6b6b; }
@@ -69,3 +96,35 @@
   padding: 12px 20px; border-radius: 8px; background: #f1f1f1; color: #0f0f0f;
   font: 400 14px/20px Roboto, Arial, sans-serif; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
+
+/* Banner on channel pages flagged as AI-generated */
+#byebot-channel-banner {
+  display: flex; align-items: center; gap: 12px; box-sizing: border-box;
+  width: calc(100% - 48px); max-width: 100%; min-width: 0; flex: none; overflow-wrap: anywhere;
+  margin: 12px 24px; padding: 12px 16px; border-radius: 12px;
+  background: rgba(220, 38, 38, 0.12); border: 1px solid rgba(220, 38, 38, 0.5);
+  color: var(--yt-spec-text-primary, var(--bb-text)); font: 400 14px/20px Roboto, Arial, sans-serif;
+}
+#byebot-channel-banner .byebot-banner-icon {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border-radius: 50%; color: #fff; background: #dc2626;
+  font: 800 13px/1 Roboto, Arial, sans-serif;
+}
+#byebot-channel-banner .byebot-banner-text { display: flex; flex-direction: column; }
+#byebot-channel-banner strong { font-weight: 500; }
+#byebot-channel-banner span:not(.byebot-banner-icon) { color: var(--yt-spec-text-secondary, var(--bb-text2)); font-size: 13px; }
+
+/* Community tally on its own line under the channel row on /watch */
+#byebot-community { margin: 8px 0 0; }
+#byebot-community .byebot-community {
+  display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px 0 6px; border-radius: 18px;
+  box-sizing: border-box; white-space: nowrap; font: 500 13px/20px Roboto, Arial, sans-serif; color: var(--yt-spec-text-primary, var(--bb-text));
+}
+#byebot-community .byebot-community-ai { background: rgba(220, 38, 38, 0.14); border: 1px solid rgba(220, 38, 38, 0.45); }
+#byebot-community .byebot-community-human { background: rgba(22, 163, 74, 0.14); border: 1px solid rgba(22, 163, 74, 0.45); }
+#byebot-community .byebot-community-dot {
+  display: inline-flex; align-items: center; justify-content: center; flex: none; width: 24px; height: 24px; border-radius: 50%;
+  color: #fff; font: 800 11px/1 Roboto, Arial, sans-serif;
+}
+#byebot-community .byebot-community-ai .byebot-community-dot { background: #dc2626; }
+#byebot-community .byebot-community-human .byebot-community-dot { background: #16a34a; font-size: 14px; }

@@ -10,8 +10,16 @@
     'ytd-compact-video-renderer',
     'ytd-grid-video-renderer',
     'yt-lockup-view-model',
+    'ytm-shorts-lockup-view-model',
+    'ytd-reel-item-renderer',
   ].join(',');
-  const CHANNEL_LINK = 'a[href^="/@"], a[href^="/channel/UC"]';
+  const THUMB_SELECTOR = 'yt-thumbnail-view-model, ytd-thumbnail, a#thumbnail';
+  const BADGE_ICONS = {
+    human: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    maybe: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 7v6.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><circle cx="12" cy="17.2" r="1.7" fill="currentColor"/></svg>',
+  };
+  const CHANNEL_LINK = 'a[href*="/@"], a[href*="/channel/UC"]';
+  const VIDEO_LINK = 'a[href*="/watch?v="], a[href*="/shorts/"]';
   const CACHE_TTL = 5 * 60 * 1000;
   const REASONS = ['ai_video', 'ai_voice', 'ai_thumbnail', 'ai_script', 'ai_images', 'mass_produced', 'other'];
 
@@ -21,15 +29,63 @@
   const vidCache = new Map();
   /** video id -> { verdict, reasons } | null  (the signed-in user's own vote) */
   const myVotes = new Map();
+  /** video id -> { bot, human } vote counts (community tally) */
+  const videoVotes = new Map();
   const pending = new Set();
+
+  // Labels survive page loads, so badges can show instantly and then get revalidated.
+  const CACHE_KEY = 'labelCache';
+  const PERSIST_MAX_AGE = 24 * 60 * 60 * 1000;
+  const PERSIST_MAX = 3000;
+  let persistTimer = null;
+  function persist() {
+    clearTimeout(persistTimer);
+    persistTimer = setTimeout(() => {
+      const cut = Date.now() - PERSIST_MAX_AGE;
+      const dump = (m) => Object.fromEntries(
+        [...m].filter(([, e]) => e.ts > cut).slice(-PERSIST_MAX).map(([k, e]) => [k, [e.label, e.ts, e.stats]]),
+      );
+      if (!alive()) return shutdown();
+      try {
+        api.storage.local.set({ [CACHE_KEY]: { ch: dump(chCache), vid: dump(vidCache) } }).catch(() => {});
+      } catch { shutdown(); }
+    }, 1500);
+  }
   const shownAnyway = new Set(); // video ids (or channel ids if no video id) the user revealed this session
   let mode = 'hide'; // 'hide' | 'mark' | 'off'
   let scanTimer = null;
 
   // Use YouTube's UI language, which is what the user is reading.
   const tr = (key, vars) => t(key, detectLang(document.documentElement.lang || navigator.language), vars);
-  const send = (msg) =>
-    Promise.resolve(api.runtime.sendMessage(msg)).catch(() => ({ error: 'extension_unavailable' }));
+
+  // When the extension is reloaded/updated, this content script is orphaned: every
+  // chrome.* call throws "Extension context invalidated" (synchronously). Detect it and shut down quietly.
+  let observer = null;
+  let navHandler = null;
+  const alive = () => {
+    try { return !!api.runtime?.id; } catch { return false; }
+  };
+  function shutdown() {
+    observer?.disconnect();
+    if (navHandler) document.removeEventListener('yt-navigate-finish', navHandler);
+    clearTimeout(scanTimer);
+    clearTimeout(persistTimer);
+    scanTimer = persistTimer = null;
+    document.querySelectorAll('[data-byebot-id]').forEach(clearCard);
+    document.getElementById('byebot-bar')?.remove();
+    document.getElementById('byebot-community')?.remove();
+    document.getElementById('byebot-channel-banner')?.remove();
+    closeDialog();
+  }
+  const send = (msg) => {
+    if (!alive()) { shutdown(); return Promise.resolve({ error: 'extension_unavailable' }); }
+    try {
+      return Promise.resolve(api.runtime.sendMessage(msg)).catch(() => ({ error: 'extension_unavailable' }));
+    } catch {
+      shutdown();
+      return Promise.resolve({ error: 'extension_unavailable' });
+    }
+  };
 
   function el(tag, className, text) {
     const e = document.createElement(tag);
@@ -72,7 +128,7 @@
       if (channelId) break;
     }
     let videoId = null;
-    for (const a of card.querySelectorAll('a[href^="/watch?v="], a[href^="/shorts/"]')) {
+    for (const a of card.querySelectorAll(VIDEO_LINK)) {
       videoId = videoFromHref(a.getAttribute('href'));
       if (videoId) break;
     }
@@ -90,12 +146,15 @@
 
   function afterVoteChange(videoId, channelId, res) {
     vidCache.set(videoId, { label: res.label, ts: Date.now() });
-    if (channelId) chCache.set(channelId, { label: res.channelLabel, ts: Date.now() });
+    if (channelId) chCache.set(channelId, { label: res.channelLabel, ts: Date.now(), stats: res.channelStats ?? undefined });
+    persist();
+    if (res.votes) videoVotes.set(videoId, res.votes);
     if (myVotes.get(videoId)?.verdict === 'human') shownAnyway.add(videoId);
     else shownAnyway.delete(videoId);
     document.querySelectorAll('[data-byebot-id]').forEach(clearCard);
     scheduleScan(true);
     updateBar();
+    updateCommunityBadge();
   }
 
   function fail(res) {
@@ -192,8 +251,47 @@
   function clearCard(card) {
     card._byebotPlaceholder?.remove();
     card._byebotPlaceholder = null;
-    card.classList.remove('byebot-hidden', 'byebot-marked');
+    card.classList.remove('byebot-hidden');
     card.removeAttribute('data-byebot-label');
+    removeBadge(card);
+  }
+
+  // ---- badge ------------------------------------------------------------
+  /** 'human' = judged human, 'bot' = judged AI, 'maybe' = channel flagged but this video not judged yet. */
+  function badgeState({ channelId, videoId }) {
+    const v = videoId ? vidCache.get(videoId)?.label : undefined;
+    if (v === 'human') return 'human';
+    if (v === 'bot') return 'bot';
+    return channelId && chCache.get(channelId)?.label === 'bot' ? 'maybe' : null;
+  }
+
+  function removeBadge(card) {
+    card._byebotBadge?.remove();
+    card._byebotBadge = null;
+    card._byebotBadgeHost?.classList.remove('byebot-badge-host');
+    card._byebotBadgeHost = null;
+  }
+
+  function setBadge(card, info) {
+    const state = mode === 'off' ? null : badgeState(info);
+    if (!state) return removeBadge(card);
+    if (card._byebotBadge?.dataset.state === state && card._byebotBadge.isConnected) return;
+    removeBadge(card);
+    const host = card.querySelector(THUMB_SELECTOR) ?? card.querySelector('img')?.parentElement;
+    if (!host) return;
+    const badge = el('span', `byebot-badge byebot-badge-${state}`);
+    badge.dataset.state = state;
+    if (state === 'bot') {
+      badge.textContent = 'IA'; // literal text, same in every language
+    } else {
+      const svg = new DOMParser().parseFromString(BADGE_ICONS[state], 'image/svg+xml').documentElement;
+      badge.append(document.importNode(svg, true));
+    }
+    badge.title = tr(state === 'human' ? 'badgeHuman' : state === 'bot' ? 'badgeBot' : 'badgeMaybe');
+    host.classList.add('byebot-badge-host');
+    host.append(badge);
+    card._byebotBadge = badge;
+    card._byebotBadgeHost = host;
   }
 
   /** Hidden when its video is judged AI, or its channel is flagged and the video isn't judged human. */
@@ -205,6 +303,11 @@
   }
 
   function applyCard(card, info) {
+    applyHide(card, info);
+    setBadge(card, info);
+  }
+
+  function applyHide(card, info) {
     const { channelId, videoId } = info;
     const reveal = videoId ?? channelId;
     const flagged = mode !== 'off' && isFlagged(info) && !shownAnyway.has(reveal);
@@ -215,11 +318,7 @@
     if (card.dataset.byebotLabel === mode) return; // already applied
     clearCard(card);
     card.dataset.byebotLabel = mode;
-    if (mode === 'mark') {
-      card.classList.add('byebot-marked');
-      card.title = tr('flagged');
-      return;
-    }
+    if (mode === 'mark') return; // "mark only": the badge is the marker
     card.classList.add('byebot-hidden');
     const ph = el('div', 'byebot-placeholder');
     const name = channelId?.startsWith('@') ? channelId : tr('aFlaggedChannel');
@@ -242,6 +341,7 @@
 
   // ---- scanning ---------------------------------------------------------
   function scan() {
+    if (!alive()) return shutdown();
     const wantCh = new Set();
     const wantVid = new Set();
     const fresh = (e) => e && Date.now() - e.ts < CACHE_TTL;
@@ -258,6 +358,8 @@
       if (info.videoId && !fresh(vidCache.get(info.videoId)) && !pending.has('v:' + info.videoId)) wantVid.add(info.videoId);
       applyCard(card, info);
     }
+    const pageCh = channelPageId();
+    if (pageCh && !fresh(chCache.get(pageCh)) && !pending.has('c:' + pageCh)) wantCh.add(pageCh);
     const ids = [...wantCh];
     const videos = [...wantVid];
     if (mode !== 'off' && (ids.length || videos.length)) {
@@ -268,17 +370,91 @@
         videos.forEach((i) => pending.delete('v:' + i));
         if (!res?.labels) return;
         const ts = Date.now();
-        for (const i of ids) chCache.set(i, { label: res.labels[i] ?? 'unknown', ts });
+        for (const i of ids) chCache.set(i, { label: res.labels[i] ?? 'unknown', ts, stats: res.stats?.[i] });
         for (const i of videos) vidCache.set(i, { label: res.videos?.[i] ?? 'unknown', ts });
-        scheduleScan();
+        persist();
+        scheduleScan(true);
       });
     }
     renderReportBar();
+    renderChannelBanner();
   }
 
+  // Throttle (not debounce): YouTube mutates the DOM constantly while loading,
+  // and a debounce would postpone scanning until it calms down.
   function scheduleScan(immediate) {
-    clearTimeout(scanTimer);
-    scanTimer = setTimeout(scan, immediate ? 0 : 300);
+    if (immediate) {
+      clearTimeout(scanTimer);
+      scanTimer = null;
+      scan();
+      return;
+    }
+    if (scanTimer) return;
+    scanTimer = setTimeout(() => { scanTimer = null; scan(); }, 120);
+  }
+
+  // ---- banner on channel pages ------------------------------------------
+  /** Channel id when the current page is a channel page (/@handle, /channel/UC...). */
+  function channelPageId() {
+    return /^\/(@[^/]+|channel\/UC[\w-]{22})(\/|$)/.test(location.pathname) ? idFromHref(location.pathname) : null;
+  }
+
+  // Match the width/position of the channel's own banner image so we never overflow the page.
+  // Ordered by preference. (A comma-joined querySelector would return the first match in
+  // document order, which can be a full-width ancestor like #page-header-banner.)
+  const CHANNEL_BANNER_REFS = ['yt-page-header-renderer', 'yt-image-banner-view-model', 'ytd-c4-tabbed-header-renderer #banner'];
+  function alignChannelBanner(banner) {
+    banner.style.width = '';
+    banner.style.marginLeft = '';
+    banner.style.marginRight = '';
+    let ref = null;
+    for (const sel of CHANNEL_BANNER_REFS) {
+      const r = document.querySelector(sel)?.getBoundingClientRect();
+      if (r && r.width >= 120) { ref = r; break; }
+    }
+    if (!ref) return; // fall back to the CSS default
+    banner.style.width = `${Math.min(ref.width, document.documentElement.clientWidth)}px`;
+    banner.style.marginLeft = '0px';
+    banner.style.marginRight = '0px';
+    const own = banner.getBoundingClientRect();
+    banner.style.marginLeft = `${Math.max(0, ref.left - own.left)}px`;
+  }
+  window.addEventListener('resize', () => {
+    const b = document.getElementById('byebot-channel-banner');
+    if (b) alignChannelBanner(b);
+  });
+
+  function renderChannelBanner() {
+    const old = document.getElementById('byebot-channel-banner');
+    const id = channelPageId();
+    const entry = id && chCache.get(id);
+    if (!id || mode === 'off' || entry?.label !== 'bot') return old?.remove();
+
+    const stats = entry.stats;
+    const total = stats ? stats.bot + stats.human : 0;
+    const sig = `${id}|${stats?.bot}|${stats?.human}|${document.documentElement.lang}`;
+    const anchor = document.querySelector('yt-page-header-renderer, ytd-c4-tabbed-header-renderer, #page-header, #channel-header');
+    if (!anchor) return old?.remove();
+    if (old?.isConnected && old.dataset.sig === sig && old.previousElementSibling === anchor) {
+      alignChannelBanner(old);
+      return;
+    }
+    old?.remove();
+
+    const banner = el('div');
+    banner.id = 'byebot-channel-banner';
+    banner.dataset.sig = sig;
+    banner.setAttribute('role', 'status');
+    const icon = el('span', 'byebot-badge-bot byebot-banner-icon', 'IA');
+    const text = el('div', 'byebot-banner-text');
+    text.append(el('strong', '', tr('channelBanner')));
+    if (total > 0) {
+      const pct = Math.round((stats.bot / total) * 100);
+      text.append(el('span', '', tr('channelBannerStats', { pct, bot: stats.bot, total })));
+    }
+    banner.append(icon, text);
+    anchor.after(banner);
+    alignChannelBanner(banner);
   }
 
   // ---- report bar on /watch, next to the Subscribe button ---------------
@@ -298,25 +474,68 @@
     humanBtn.classList.toggle('byebot-selected', human);
   }
 
+  /** "X% of the community says it's human / AI", from the public vote tally. */
+  // Own line under the channel row, so it never squeezes YouTube's like/share buttons.
+  function communityRow(create) {
+    let row = document.getElementById('byebot-community');
+    if (!row && create) {
+      const anchor = document.querySelector('ytd-watch-metadata #top-row') ?? document.querySelector('#owner');
+      if (!anchor) return null;
+      row = el('div');
+      row.id = 'byebot-community';
+      anchor.after(row);
+    }
+    return row;
+  }
+
+  function updateCommunityBadge() {
+    const bar = document.getElementById('byebot-bar');
+    if (!bar) return communityRow(false)?.remove();
+    const votes = videoVotes.get(bar.dataset.video);
+    const total = votes ? votes.bot + votes.human : 0;
+    if (!votes || total === 0 || votes.bot === votes.human) return communityRow(false)?.remove(); // no votes or a tie: nothing to claim
+    const ai = votes.bot > votes.human;
+    const pct = Math.round((Math.max(votes.bot, votes.human) / total) * 100);
+    const row = communityRow(true);
+    if (!row) return;
+    row.dataset.video = bar.dataset.video;
+    const pill = el('span', `byebot-community byebot-community-${ai ? 'ai' : 'human'}`);
+    pill.append(
+      el('span', 'byebot-community-dot', ai ? 'IA' : '✓'),
+      el('span', '', `${tr(ai ? 'communityAi' : 'communityHuman', { pct })} · ${tr(total === 1 ? 'communityVote' : 'communityVotes', { n: total })}`),
+    );
+    row.replaceChildren(pill);
+  }
+
+  async function loadVideoStats(videoId) {
+    const res = await send({ type: 'videoStats', videoId });
+    if (res && !res.error) { videoVotes.set(videoId, { bot: res.bot, human: res.human }); updateCommunityBadge(); }
+  }
+
   async function loadMyVote(videoId) {
     if (myVotes.has(videoId)) return;
     const res = await send({ type: 'myVote', videoId });
     if (!res?.error) { myVotes.set(videoId, res.vote); updateBar(); }
   }
 
+  function removeBar() {
+    document.getElementById('byebot-bar')?.remove();
+    document.getElementById('byebot-community')?.remove();
+  }
+
   function renderReportBar() {
     const old = document.getElementById('byebot-bar');
-    if (location.pathname !== '/watch') return old?.remove();
+    if (location.pathname !== '/watch') return removeBar();
     const videoId = new URLSearchParams(location.search).get('v');
     const owner = document.querySelector('ytd-watch-metadata #owner') ?? document.querySelector('#owner');
     const link = owner?.querySelector('ytd-channel-name a');
     const channelId = link ? idFromHref(link.getAttribute('href')) : null;
-    if (!owner || !videoId || !/^[\w-]{11}$/.test(videoId)) return old?.remove();
+    if (!owner || !videoId || !/^[\w-]{11}$/.test(videoId)) return removeBar();
 
     // Sit right after the Subscribe button's container so both share the same row.
     const sub = owner.querySelector('#subscribe-button') ?? document.querySelector('ytd-watch-metadata #subscribe-button');
     if (old?.isConnected && old.dataset.video === videoId && (!sub || old.previousElementSibling === sub)) return;
-    old?.remove();
+    removeBar();
 
     const bar = el('div');
     bar.id = 'byebot-bar';
@@ -340,7 +559,9 @@
     bar.append(report, human);
     sub ? sub.after(bar) : owner.append(bar);
     updateBar();
+    updateCommunityBadge();
     loadMyVote(videoId);
+    loadVideoStats(videoId);
   }
 
   // ---- init -------------------------------------------------------------
@@ -358,10 +579,14 @@
     }
   });
 
-  api.storage.local.get('mode').then(({ mode: m }) => {
+  api.storage.local.get(['mode', CACHE_KEY]).then(({ mode: m, [CACHE_KEY]: saved }) => {
     mode = m ?? 'hide';
-    new MutationObserver(() => scheduleScan()).observe(document.body, { childList: true, subtree: true });
-    document.addEventListener('yt-navigate-finish', () => scheduleScan(true));
+    for (const [k, [label, ts, stats]] of Object.entries(saved?.ch ?? {})) chCache.set(k, { label, ts, stats });
+    for (const [k, [label, ts]] of Object.entries(saved?.vid ?? {})) vidCache.set(k, { label, ts });
+    observer = new MutationObserver(() => scheduleScan());
+    observer.observe(document.body, { childList: true, subtree: true });
+    navHandler = () => scheduleScan(true);
+    document.addEventListener('yt-navigate-finish', navHandler);
     scheduleScan(true);
   });
 })();
