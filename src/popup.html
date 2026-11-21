@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header><img src="../icons/icon-32.png" alt="" /><h1>ByeBot</h1></header>
+
+  <section>
+    <p id="auth-text">Reading is anonymous. Sign in with Google to report bots.</p>
+    <button id="signin" class="primary">Sign in with Google</button>
+    <button id="signout" hidden>Sign out</button>
+  </section>
+
+  <section>
+    <label for="mode">Flagged channels</label>
+    <select id="mode">
+      <option value="hide">Hide videos</option>
+      <option value="mark">Mark only</option>
+      <option value="off">Off</option>
+    </select>
+  </section>
+
+  <section id="danger" hidden>
+    <button id="delete" class="link">Delete my account &amp; reports</button>
+  </section>
+
+  <footer><a href="https://byebot.org/privacy" target="_blank" rel="noopener">Privacy</a> · <a href="https://byebot.org" target="_blank" rel="noopener">byebot.org</a></footer>
+  <script src="popup.js"></script>
+</body>
+</html>

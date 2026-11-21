@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "ByeBot",
+  "version": "0.1.0",
+  "description": "Say goodbye to bots. Community-driven labels for YouTube channels, powered by human consensus.",
+  "icons": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
+  "permissions": ["storage"],
+  "host_permissions": ["https://byebot-backend.ronaldzav.workers.dev/*"],
+  "background": {
+    "service_worker": "src/background.js",
+    "scripts": ["src/background.js"]
+  },
+  "action": { "default_popup": "src/popup.html", "default_title": "ByeBot" },
+  "content_scripts": [
+    {
+      "matches": ["https://www.youtube.com/*", "https://m.youtube.com/*"],
+      "js": ["src/youtube.js"],
+      "css": ["src/youtube.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://byebot.org/login*"],
+      "js": ["src/login-bridge.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "browser_specific_settings": {
+    "gecko": { "id": "extension@byebot.org", "strict_min_version": "128.0" }
+  }
+}
