@@ -8,14 +8,64 @@
   color: var(--yt-spec-text-secondary, #aaa); font: 500 12px/1.4 Roboto, Arial, sans-serif;
 }
 .byebot-placeholder span { flex: 1 1 auto; }
-.byebot-placeholder button, #byebot-bar button {
+.byebot-placeholder button {
   cursor: pointer; border: 1px solid rgba(20, 184, 166, 0.5); background: transparent;
   color: #2dd4bf; border-radius: 999px; padding: 4px 10px; font: 600 12px Roboto, Arial, sans-serif;
 }
-.byebot-placeholder button:hover, #byebot-bar button:hover:not(:disabled) { background: rgba(20, 184, 166, 0.18); }
+.byebot-placeholder button:hover { background: rgba(20, 184, 166, 0.18); }
+
+/* Report bar on /watch: same shape/typography as YouTube's Subscribe button, in red. */
+#byebot-bar {
+  display: inline-flex; align-items: center; align-self: center; flex: none;
+  height: 36px; margin-left: 8px; gap: 8px; box-sizing: border-box;
+}
+#byebot-bar button {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 36px; margin: 0; padding: 0 16px; border: none; border-radius: 18px; cursor: pointer;
+  font: 500 14px/20px Roboto, Arial, sans-serif; white-space: nowrap; box-sizing: border-box;
+}
+#byebot-bar .byebot-report { background: #cc0000; color: #fff; }
+#byebot-bar .byebot-report:hover:not(:disabled) { background: #a80000; }
+#byebot-bar .byebot-report.byebot-selected { background: #7a0000; }
+#byebot-bar .byebot-safe { background: var(--yt-spec-badge-chip-background, rgba(255,255,255,.1)); color: var(--yt-spec-text-primary, #fff); }
+#byebot-bar .byebot-safe:hover:not(:disabled) { background: var(--yt-spec-button-chip-background-hover, rgba(255,255,255,.2)); }
+#byebot-bar .byebot-safe.byebot-selected { background: rgba(34, 197, 94, 0.25); color: #4ade80; }
 #byebot-bar button:disabled { opacity: 0.6; cursor: default; }
 
-#byebot-bar {
-  display: flex; align-items: center; gap: 8px; margin: 8px 0;
-  color: var(--yt-spec-text-secondary, #aaa); font: 600 12px Roboto, Arial, sans-serif;
+/* YouTube-style dialog */
+#byebot-overlay {
+  position: fixed; inset: 0; z-index: 2147483000; display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+}
+#byebot-dialog {
+  width: 440px; max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); overflow: auto; box-sizing: border-box;
+  padding: 24px; border-radius: 12px;
+  background: var(--yt-spec-base-background, #212121); color: var(--yt-spec-text-primary, #fff);
+  font-family: Roboto, Arial, sans-serif; box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+}
+#byebot-dialog h2 { margin: 0 0 8px; font: 500 20px/28px Roboto, Arial, sans-serif; color: inherit; }
+#byebot-dialog .byebot-sub { margin: 0 0 12px; font: 400 14px/20px Roboto, Arial, sans-serif; color: var(--yt-spec-text-secondary, #aaa); }
+.byebot-reasons { display: flex; flex-direction: column; }
+.byebot-reason {
+  display: flex; align-items: center; gap: 16px; padding: 10px 4px; cursor: pointer; border-radius: 8px;
+  font: 400 14px/20px Roboto, Arial, sans-serif;
+}
+.byebot-reason:hover { background: var(--yt-spec-10-percent-layer, rgba(255,255,255,.1)); }
+.byebot-reason input { width: 18px; height: 18px; margin: 0; accent-color: #cc0000; cursor: pointer; flex: none; }
+.byebot-footer { display: flex; align-items: center; gap: 8px; margin-top: 20px; }
+.byebot-spacer { flex: 1; }
+.byebot-btn {
+  height: 36px; padding: 0 16px; border: none; border-radius: 18px; cursor: pointer; background: transparent;
+  color: var(--yt-spec-text-primary, #fff); font: 500 14px Roboto, Arial, sans-serif;
+}
+.byebot-btn:hover:not(:disabled) { background: var(--yt-spec-10-percent-layer, rgba(255,255,255,.1)); }
+.byebot-btn.byebot-primary { background: #cc0000; color: #fff; }
+.byebot-btn.byebot-primary:hover:not(:disabled) { background: #a80000; }
+.byebot-btn.byebot-danger { color: #ff6b6b; }
+.byebot-btn:disabled { opacity: 0.4; cursor: default; }
+
+#byebot-toast {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 2147483001;
+  padding: 12px 20px; border-radius: 8px; background: #f1f1f1; color: #0f0f0f;
+  font: 400 14px/20px Roboto, Arial, sans-serif; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }

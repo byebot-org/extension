@@ -14,29 +14,35 @@ async function getSession() {
   return session;
 }
 
-async function request(path, body, token) {
+async function request(path, body, token, method = 'POST') {
   const res = await fetch(API_BASE + path, {
-    method: 'POST',
+    method,
     headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify(body),
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
   return { status: res.status, data };
 }
 
-async function lookup(ids) {
+async function lookup(ids = [], videos = []) {
   const labels = {};
-  for (let i = 0; i < ids.length; i += MAX_BATCH) {
-    const { status, data } = await request('/v1/lookup', { ids: ids.slice(i, i + MAX_BATCH) });
-    if (status === 200) Object.assign(labels, data.labels);
+  const vids = {};
+  const batches = Math.max(Math.ceil(ids.length / MAX_BATCH), Math.ceil(videos.length / MAX_BATCH));
+  for (let b = 0; b < batches; b++) {
+    const { status, data } = await request('/v1/lookup', {
+      ids: ids.slice(b * MAX_BATCH, (b + 1) * MAX_BATCH),
+      videos: videos.slice(b * MAX_BATCH, (b + 1) * MAX_BATCH),
+    });
+    if (status === 200) { Object.assign(labels, data.labels); Object.assign(vids, data.videos); }
   }
-  return { labels };
+  return { labels, videos: vids };
 }
 
-async function report(channelId, verdict) {
+// Authenticated call; a 401 drops the stored session.
+async function authed(path, body, method) {
   const session = await getSession();
   if (!session) return { error: 'not_signed_in' };
-  const { status, data } = await request('/v1/reports', { channelId, verdict }, session.token);
+  const { status, data } = await request(path, body, session.token, method);
   if (status === 401) {
     await api.storage.local.remove('session');
     return { error: 'not_signed_in' };
@@ -44,9 +50,15 @@ async function report(channelId, verdict) {
   return status === 200 ? data : { error: data.error ?? 'failed' };
 }
 
+const report = (videoId, verdict, reasons) => authed('/v1/reports', { videoId, verdict, reasons });
+const myVote = (videoId) => authed(`/v1/reports/mine?videoId=${encodeURIComponent(videoId)}`, undefined, 'GET');
+const withdraw = (videoId) => authed(`/v1/reports?videoId=${encodeURIComponent(videoId)}`, undefined, 'DELETE');
+
 const handlers = {
-  lookup: (m) => lookup(m.ids),
-  report: (m) => report(m.channelId, m.verdict),
+  lookup: (m) => lookup(m.ids, m.videos),
+  report: (m) => report(m.videoId, m.verdict, m.reasons),
+  myVote: (m) => myVote(m.videoId),
+  withdraw: (m) => withdraw(m.videoId),
   getState: async () => {
     const [session, { mode }] = await Promise.all([getSession(), api.storage.local.get('mode')]);
     return { signedIn: !!session, mode: mode ?? 'hide' };

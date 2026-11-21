@@ -1,3 +1,5 @@
 node_modules
 *.zip
 web-ext-artifacts
+dist
+out

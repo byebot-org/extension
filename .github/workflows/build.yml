@@ -1,0 +1,59 @@
+name: Build extension
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write # needed to attach files to a GitHub Release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Syntax check
+        run: for f in src/*.js scripts/*.mjs; do node --check "$f"; done
+
+      - name: Read version
+        id: meta
+        run: echo "version=$(node -p "require('./manifest.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Tag must match manifest version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          if [ "${GITHUB_REF_NAME#v}" != "${{ steps.meta.outputs.version }}" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match manifest version ${{ steps.meta.outputs.version }}"; exit 1
+          fi
+
+      - name: Build per-browser bundles
+        run: node scripts/build.mjs
+
+      - name: Package zips
+        run: |
+          V=${{ steps.meta.outputs.version }}
+          mkdir -p out
+          (cd dist/chrome  && zip -r -q ../../out/byebot-chrome-$V.zip .)
+          (cd dist/firefox && zip -r -q ../../out/byebot-firefox-$V.zip .)
+          ls -l out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: byebot-extension-${{ steps.meta.outputs.version }}
+          path: out/*.zip
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*.zip
+          generate_release_notes: true
